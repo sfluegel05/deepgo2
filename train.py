@@ -1,3 +1,5 @@
+
+
 import click as ck
 import pandas as pd
 import torch as th
@@ -37,6 +39,9 @@ from deepgo.metrics import compute_roc
     '--test-data-name', '-td', default='test', type=ck.Choice(['test', 'nextprot', 'valid']),
     help='Test data set name')
 @ck.option(
+    '--train-data-name', '-tr', default='train',
+    help='Train data set name')
+@ck.option(
     '--batch-size', '-bs', default=37,
     help='Batch size for training')
 @ck.option(
@@ -47,13 +52,13 @@ from deepgo.metrics import compute_roc
 @ck.option(
     '--device', '-d', default='cuda:0',
     help='Device')
-def main(data_root, ont, model_name, model_id, test_data_name, batch_size, epochs, load, device):
+def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, batch_size, epochs, load, device):
     """
     This script is used to train DeepGO models
     """
     if model_id is not None:
         model_name = f'{model_name}_{model_id}'
-
+    model_name += f"_{train_data_name}"
     if model_name.find('plus') != -1:
         go_norm_file = f'{data_root}/go-plus.norm'
     else:
@@ -74,9 +79,10 @@ def main(data_root, ont, model_name, model_id, test_data_name, batch_size, epoch
     else:
         features_length = None # Optional in this case
         features_column = 'interpros'
+    train_data_file = f'{train_data_name}.pkl'
     test_data_file = f'{test_data_name}_data.pkl'
     iprs_dict, terms_dict, train_data, valid_data, test_data, test_df = load_data(
-        data_root, ont, terms_file, features_length, features_column, test_data_file)
+        data_root, ont, terms_file, features_length, features_column, train_data_file, test_data_file)
     n_terms = len(terms_dict)
     if features_column == 'interpros':
         features_length = len(iprs_dict)
