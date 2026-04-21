@@ -17,6 +17,7 @@ performance.
 * Install DGL: `pip install dgl==1.1.2+cu117 -f https://data.dgl.ai/wheels/cu117/repo.html`
 * Install other requirements:
   `pip install -r requirements.txt`
+* `pip install packaging`
 
 
 # Running DeepGO-SE model (with GOPlus axioms)

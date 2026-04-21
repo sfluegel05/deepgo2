@@ -54,6 +54,13 @@ def main(data_root, ont, model_name, model_id, test_data_name, batch_size, epoch
     if model_id is not None:
         model_name = f'{model_name}_{model_id}'
 
+    # Gracefully fall back to CPU when CUDA was requested but is unavailable.
+    if device.startswith('cuda') and not th.cuda.is_available():
+        print(
+            f'WARNING: Requested device {device}, but CUDA is not available in this '
+            'PyTorch build. Falling back to cpu.')
+        device = 'cpu'
+
     if model_name.find('plus') != -1:
         go_norm_file = f'{data_root}/go-plus.norm'
     else:
@@ -171,7 +178,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, batch_size, epoch
 
     # Loading best model
     print('Loading the best model')
-    net.load_state_dict(th.load(model_file))
+    net.load_state_dict(th.load(model_file, map_location=device))
     net.eval()
 
     with th.no_grad():
