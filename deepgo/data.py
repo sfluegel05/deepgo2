@@ -34,7 +34,7 @@ def get_data(df, features_dict, terms_dict, features_length, features_column):
 
 def load_data(
         data_root, ont, terms_file, features_length=2560,
-        features_column='esm2', test_data_file='test_data.pkl'):
+        features_column='esm2', train_data_file='train_data.pkl', test_data_file='test_data.pkl'):
     terms_df = pd.read_pickle(terms_file)
     terms = terms_df['gos'].values.flatten()
     terms_dict = {v: i for i, v in enumerate(terms)}
@@ -47,7 +47,7 @@ def load_data(
         features_length = len(iprs_dict)
     
 
-    train_df = pd.read_pickle(f'{data_root}/{ont}/train_data.pkl')
+    train_df = pd.read_pickle(f'{data_root}/{ont}/{train_data_file}')
     valid_df = pd.read_pickle(f'{data_root}/{ont}/valid_data.pkl')
     test_df = pd.read_pickle(f'{data_root}/{ont}/{test_data_file}')
 
