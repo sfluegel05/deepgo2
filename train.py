@@ -8,18 +8,19 @@ from torch import nn
 from torch.nn import functional as F
 from torch import optim
 from torch.optim.lr_scheduler import MultiStepLR
-from sklearn.metrics import roc_curve, auc, matthews_corrcoef
+from sklearn.metrics import roc_curve, auc, matthews_corrcoef, f1_score
 import copy
 from torch.utils.data import DataLoader, IterableDataset, TensorDataset
 from itertools import cycle
 import math
+import wandb
 from deepgo.torch_utils import FastTensorDataLoader
 from deepgo.utils import Ontology, propagate_annots
 from multiprocessing import Pool
 from functools import partial
 from deepgo.data import load_data, load_normal_forms
 from deepgo.models import DeepGOModel
-from deepgo.metrics import compute_roc
+from deepgo.metrics import compute_roc, compute_metrics
 
 @ck.command()
 @ck.option(
@@ -67,11 +68,29 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
             'PyTorch build. Falling back to cpu.')
         device = 'cpu'
 
+    wandb.init(
+        project='deepgo',
+        entity='chebai',
+        name=f'{model_name}_{ont}',
+        config=dict(
+            model_name=model_name,
+            ont=ont,
+            batch_size=batch_size,
+            epochs=epochs,
+            device=device,
+            train_data_name=train_data_name,
+            test_data_name=test_data_name,
+            lr=5e-4,
+            lr_milestones=[5, 20],
+            lr_gamma=0.1,
+        )
+    )
+
     if model_name.find('plus') != -1:
         go_norm_file = f'{data_root}/go-plus.norm'
     else:
         go_norm_file = f'{data_root}/go.norm'
-        
+
     go_file = f'{data_root}/go.obo'
     model_file = f'{data_root}/{ont}/{model_name}.th'
     terms_file = f'{data_root}/{ont}/terms.pkl'
@@ -113,7 +132,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
     nf4 = th.LongTensor(nf4).to(device)
     normal_forms = nf1, nf2, nf3, nf4
 
-    
+
     # Create DataLoaders
     train_loader = FastTensorDataLoader(
         *train_data, batch_size=batch_size, shuffle=True)
@@ -121,7 +140,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
         *valid_data, batch_size=batch_size, shuffle=False)
     test_loader = FastTensorDataLoader(
         *test_data, batch_size=batch_size, shuffle=False)
-    
+
 
     loss_func = nn.BCELoss()
     net = DeepGOModel(features_length, n_terms, n_zeros, n_rels, device).to(device)
@@ -138,6 +157,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
             train_loss = 0
             train_elloss = 0
             train_steps = int(math.ceil(len(train_labels) / batch_size))
+            train_preds = []
             with ck.progressbar(length=train_steps, show_pos=True) as bar:
                 for batch_features, batch_labels in train_loader:
                     bar.update(1)
@@ -152,9 +172,15 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
                     optimizer.zero_grad()
                     total_loss.backward()
                     optimizer.step()
-                    
+                    train_preds.append(logits.detach().cpu().numpy())
+
             train_loss /= train_steps
-            
+            train_preds = np.concatenate(train_preds)
+            train_preds_bin = (train_preds >= 0.5).astype(np.int32)
+            train_labels_np = train_labels.detach().cpu().numpy() if th.is_tensor(train_labels) else train_labels
+            train_f1_micro = f1_score(train_labels_np, train_preds_bin, average='micro', zero_division=0)
+            train_f1_macro = f1_score(train_labels_np, train_preds_bin, average='macro', zero_division=0)
+
             print('Validation')
             net.eval()
             with th.no_grad():
@@ -169,10 +195,25 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
                         logits = net(batch_features)
                         batch_loss = F.binary_cross_entropy(logits, batch_labels)
                         valid_loss += batch_loss.detach().item()
-                        preds = np.append(preds, logits.detach().cpu().numpy())
+                        preds.append(logits.detach().cpu().numpy())
                 valid_loss /= valid_steps
+                preds = np.concatenate(preds)
                 roc_auc = compute_roc(valid_labels, preds)
+                preds_bin = (preds >= 0.5).astype(np.int32)
+                valid_f1_micro = f1_score(valid_labels, preds_bin, average='micro', zero_division=0)
+                valid_f1_macro = f1_score(valid_labels, preds_bin, average='macro', zero_division=0)
                 print(f'Epoch {epoch}: Loss - {train_loss}, EL Loss: {train_elloss}, Valid loss - {valid_loss}, AUC - {roc_auc}')
+
+            wandb.log({
+                'train/loss': train_loss,
+                'train/el_loss': train_elloss,
+                'train/f1_micro': train_f1_micro,
+                'train/f1_macro': train_f1_macro,
+                'valid/loss': valid_loss,
+                'valid/auc_micro': roc_auc,
+                'valid/f1_micro': valid_f1_micro,
+                'valid/f1_macro': valid_f1_macro,
+            }, step=epoch)
 
             print('EL Loss', train_elloss)
             if valid_loss < best_loss:
@@ -181,7 +222,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
                 th.save(net.state_dict(), model_file)
 
             scheduler.step()
-            
+
 
     # Loading best model
     print('Loading the best model')
@@ -218,21 +259,57 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
                 preds.append(logits.detach().cpu().numpy())
             test_loss /= test_steps
         preds = np.concatenate(preds)
-        roc_auc = compute_roc(test_labels, preds)
-        print(f'Valid Loss - {valid_loss}, Test Loss - {test_loss}, Test AUC - {roc_auc}')
+        test_preds_bin = (preds >= 0.5).astype(np.int32)
+        test_f1_micro = f1_score(test_labels, test_preds_bin, average='micro', zero_division=0)
+        test_f1_macro = f1_score(test_labels, test_preds_bin, average='macro', zero_division=0)
+        print(f'Valid Loss - {valid_loss}, Test Loss - {test_loss}')
 
-    # Save the performance into a file
-    with open(f'{data_root}/{ont}/valid_{model_name}.pf', 'w') as f:
-        f.write(f'Valid Loss - {valid_loss}, Test Loss - {test_loss}, Test AUC - {roc_auc}\n')
-    # return
     preds = list(preds)
     # Propagate scores using ontology structure
     with Pool(32) as p:
         preds = p.map(partial(propagate_annots, go=go, terms_dict=terms_dict), preds)
 
     test_df['preds'] = preds
-
     test_df.to_pickle(out_file)
+
+    # Evaluate using the same logic as evaluate.py and log to wandb
+    print('Running evaluation')
+    terms_df = pd.read_pickle(terms_file)
+    terms = terms_df['gos'].values.flatten()
+
+    train_df = pd.read_pickle(f'{data_root}/{ont}/{train_data_name}_data.pkl')
+    valid_df = pd.read_pickle(f'{data_root}/{ont}/valid_data.pkl')
+    all_train_df = pd.concat([train_df, valid_df])
+    annotations = list(map(set, all_train_df['prop_annotations'].values))
+    test_annotations = list(map(set, test_df['prop_annotations'].values))
+    go.calculate_ic(annotations + test_annotations)
+
+    eval_preds = np.concatenate(test_df['preds'].values).reshape(-1, len(terms))
+    fmax, smin, tmax, wfmax, wtmax, avg_auc, aupr, avgic, fmax_spec_match = compute_metrics(
+        test_df, go, terms_dict, terms, ont, eval_preds)
+
+    print(f'Fmax: {fmax:0.3f}, Smin: {smin:0.3f}, threshold: {tmax}')
+    print(f'WFmax: {wfmax:0.3f}, threshold: {wtmax}')
+    print(f'AUC: {avg_auc:0.3f}')
+    print(f'AUPR: {aupr:0.3f}')
+    print(f'AVGIC: {avgic:0.3f}')
+
+    wandb.log({
+        'test/loss': test_loss,
+        'test/f1_micro': test_f1_micro,
+        'test/f1_macro': test_f1_macro,
+        'test/fmax': fmax,
+        'test/smin': smin,
+        'test/fmax_threshold': tmax,
+        'test/wfmax': wfmax,
+        'test/wfmax_threshold': wtmax,
+        'test/auc': avg_auc,
+        'test/aupr': aupr,
+        'test/avgic': avgic,
+        'test/fmax_spec_match': fmax_spec_match,
+        'valid/loss_final': valid_loss,
+    })
+    wandb.finish()
 
 
 

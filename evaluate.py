@@ -76,6 +76,8 @@ def main(data_root, ont, model_name, test_data_name):
     print(f'AUC: {avg_auc:0.3f}')
     print(f'AUPR: {aupr:0.3f}')
     print(f'AVGIC: {avgic:0.3f}')
+    # results as md table line
+    print(f"| {model_name} | | | {fmax:0.3f} | {smin:0.3f} | {tmax} | {fmax_spec_match:0.3f} | {wfmax:0.3f} | {wtmax} | {avg_auc:0.3f} | {aupr:0.3f} | {avgic:0.3f} |")
 
 
 if __name__ == '__main__':
