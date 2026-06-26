@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import click as ck
 import sys
+import os
+import re
+import glob
 from collections import deque
 import time
 import logging
@@ -66,7 +69,7 @@ def main(data_root, ont, model_name, test_data_name, combine, n_models):
     for i in top_models: #range(6):#[0, 5, 6, 8]:
         #if i not in top_models:
         #    continue
-        test_df = pd.read_pickle(f'{data_root}/{ont}/nextprot_predictions_{model_name}_{i}.pkl')
+        test_df = pd.read_pickle(f'{data_root}/{ont}/{test_data_name}_predictions_{model_name}_{i}.pkl')
         for j, row in enumerate(test_df.itertuples()):
             if j == len(eval_preds):
                 eval_preds.append(row.preds)
@@ -97,8 +100,16 @@ def main(data_root, ont, model_name, test_data_name, combine, n_models):
 
 def get_top_models(ont, model, n_models):
     valid_losses = []
-    for ind in range(10):
-        with open(f'data/{ont}/valid_{model}_{ind}.pf') as f:
+    # Discover the model indices that actually have a validation report on disk
+    # instead of assuming a fixed range of 10 models.
+    pf_files = sorted(glob.glob(f'data/{ont}/valid_{model}_*.pf'))
+    pattern = re.compile(rf'valid_{re.escape(model)}_(\d+)\.pf$')
+    for pf_file in pf_files:
+        match = pattern.search(os.path.basename(pf_file))
+        if match is None:
+            continue
+        ind = int(match.group(1))
+        with open(pf_file) as f:
             lines = f.readlines()
             it = lines[-1].strip().split(', ')[0].split(' - ')
             loss = float(it[-1])
