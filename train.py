@@ -277,7 +277,7 @@ def main(data_root, ont, model_name, model_id, test_data_name, train_data_name, 
     terms_df = pd.read_pickle(terms_file)
     terms = terms_df['gos'].values.flatten()
 
-    train_df = pd.read_pickle(f'{data_root}/{ont}/{train_data_name}_data.pkl')
+    train_df = pd.read_pickle(f'{data_root}/{ont}/{train_data_name}.pkl')
     valid_df = pd.read_pickle(f'{data_root}/{ont}/valid_data.pkl')
     all_train_df = pd.concat([train_df, valid_df])
     annotations = list(map(set, all_train_df['prop_annotations'].values))
